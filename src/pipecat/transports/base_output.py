@@ -714,8 +714,8 @@ class BaseOutputTransport(FrameProcessor):
                             last_frame_time = time.time()
                         yield frame
                         self._audio_queue.task_done()
-                        # Check if this is EndFrame and break the loop
-                        if isinstance(frame, EndFrame):
+                        # Check if this is EndFrame or CancelFrame and break the loop
+                        if isinstance(frame, (EndFrame, CancelFrame)):
                             break
                     except asyncio.QueueEmpty:
                         # Notify the bot stopped speaking upstream if necessary.
