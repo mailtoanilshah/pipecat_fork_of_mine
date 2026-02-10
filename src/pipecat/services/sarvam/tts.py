@@ -644,13 +644,44 @@ class SarvamTTSService(InterruptibleTTSService):
                     await self.push_frame(frame)
                 elif msg.get("type") == "error":
                     error_msg = msg["data"]["message"]
-                    await self.push_error(error_msg=f"TTS Error: {error_msg}")
+                    logger.error(f"Sarvam TTS error: {error_msg}")
+                    
+                    # Check if this is a configuration error (voice/model mismatch)
+                    is_config_error = (
+                        "not compatible with model" in error_msg
+                        or "Available speakers" in error_msg
+                    )
+                    
+                    # Configuration errors are fatal but should trigger graceful shutdown
+                    # Other errors like timeouts or transient issues are not fatal
+                    is_fatal = (
+                        is_config_error
+                        or "at least one character" in error_msg
+                        or "allowed languages" in error_msg
+                    )
+                    
+                    # Don't treat generic 400 errors or websocket request errors as fatal
+                    # These might be transient and recoverable
+                    
+                    await self.push_error(error_msg=f"TTS Error: {error_msg}", fatal=is_fatal)
 
                     # If it's a timeout error, the connection might need to be reset
+                    # but it's not fatal - we can reconnect
                     if "too long" in error_msg.lower() or "timeout" in error_msg.lower():
-                        logger.warning("Connection timeout detected, service may need restart")
+                        logger.warning("Connection timeout detected, will attempt reconnect")
+                        is_fatal = False
 
-                    await self.push_frame(ErrorFrame(error=f"TTS Error: {error_msg}"))
+                    await self.push_frame(ErrorFrame(error=f"TTS Error: {error_msg}", fatal=is_fatal))
+                    
+                    # Stop TTS and reset state for fatal errors
+                    if is_fatal:
+                        logger.warning(
+                            f"Fatal TTS error detected: {error_msg}. "
+                            "Stopping TTS and initiating graceful shutdown."
+                        )
+                        await self.push_frame(TTSStoppedFrame())
+                        self._started = False
+                        await self.stop_ttfb_metrics()
 
     async def _keepalive_task_handler(self):
         """Handle keepalive messages to maintain WebSocket connection."""
@@ -672,6 +703,11 @@ class SarvamTTSService(InterruptibleTTSService):
         """Send text to Sarvam WebSocket for synthesis."""
         if self._disconnecting:
             logger.warning("Service is disconnecting, ignoring text send")
+            return
+        
+        # Validate text before sending
+        if not text or not text.strip():
+            logger.warning(f"Skipping empty text for TTS: [{text}]")
             return
 
         if self._websocket and self._websocket.state == State.OPEN:

@@ -706,10 +706,30 @@ class PipelineTask(BasePipelineTask):
                 await self._call_event_handler("on_pipeline_cancelled", frame)
                 await self._call_event_handler("on_pipeline_finished", frame)
 
+        async def wait_for_end_with_timeout():
+            """Wait for EndFrame with timeout to prevent hangs from fatal errors."""
+            try:
+                # Use same timeout as CancelFrame to prevent indefinite hangs
+                await asyncio.wait_for(
+                    self._pipeline_end_event.wait(), timeout=self._cancel_timeout_secs
+                )
+                logger.debug(f"{self}: {frame} reached the end of the pipeline, pipeline is closing.")
+            except asyncio.TimeoutError:
+                logger.error(
+                    f"{self}: timeout waiting for {frame} to reach the end of the pipeline. "
+                    "This may indicate a fatal error caused a hang. Forcing cleanup."
+                )
+                # Force cleanup handlers to run even on timeout
+                await self._call_event_handler("on_pipeline_ended", frame)
+                await self._call_event_handler("on_pipeline_finished", frame)
+
         logger.debug(f"{self}: Closing. Waiting for {frame} to reach the end of the pipeline...")
 
         if isinstance(frame, CancelFrame):
             await wait_for_cancel()
+        elif isinstance(frame, EndFrame):
+            # Add timeout protection for EndFrame (especially from fatal errors)
+            await wait_for_end_with_timeout()
         else:
             await self._pipeline_end_event.wait()
             logger.debug(f"{self}: {frame} reached the end of the pipeline, pipeline is closing.")
