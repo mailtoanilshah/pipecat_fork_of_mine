@@ -497,11 +497,22 @@ class SarvamTTSService(InterruptibleTTSService):
         await super().cancel(frame)
         await self._disconnect()
 
-    async def flush_audio(self):
-        """Flush any pending audio synthesis by sending stop command."""
+    async def flush_audio(self, wait: bool = True):
+        """Flush any pending audio synthesis by sending stop command.
+        
+        Args:
+            wait: If True, waits for flush to complete. If False, sends flush but doesn't block.
+        """
         if self._websocket:
             msg = {"type": "flush"}
             await self._websocket.send(json.dumps(msg))
+            
+            if wait:
+                # Wait for buffered audio chunks to be received and played (prevents truncation)
+                # Longer wait needed for Asterisk calls due to RTP buffering
+                # This blocks frame processing to ensure all audio is received and queued
+                await asyncio.sleep(2)
+            # If wait=False (user hangup), return immediately without waiting
 
     async def push_frame(self, frame: Frame, direction: FrameDirection = FrameDirection.DOWNSTREAM):
         """Push a frame downstream with special handling for stop conditions.
@@ -517,10 +528,6 @@ class SarvamTTSService(InterruptibleTTSService):
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         """Process a frame and flush audio if it's the end of a full response."""
         await super().process_frame(frame, direction)
-
-        # When the LLM finishes responding, flush any remaining text in Sarvam's buffer
-        if isinstance(frame, (LLMFullResponseEndFrame, EndFrame)):
-            await self.flush_audio()
 
     async def _update_settings(self, settings: Mapping[str, Any]):
         """Update service settings and reconnect if voice changed."""

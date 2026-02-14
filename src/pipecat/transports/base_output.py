@@ -50,8 +50,10 @@ from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.transports.base_transport import TransportParams
 from pipecat.utils.time import nanoseconds_to_seconds
 
-# Send bot stopped speaking immediately when using mixer
-BOT_VAD_STOP_SECS = 0
+# Send bot stopped speaking after a small delay to ensure all audio is transmitted
+# This is especially important for RTP/Asterisk calls where buffering can cause
+# the last syllable to be cut off if we signal "stopped" too early
+BOT_VAD_STOP_SECS = 0.3
 
 
 class BaseOutputTransport(FrameProcessor):
